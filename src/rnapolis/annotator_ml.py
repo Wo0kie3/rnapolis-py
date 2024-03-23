@@ -3,6 +3,8 @@ import argparse
 import csv
 import logging
 import os
+import numpy
+from xgboost import XGBClassifier
 from typing import List, Optional, Tuple
 
 import numpy.typing
@@ -26,31 +28,65 @@ from rnapolis.tertiary import (
     Residue3D,
     Structure3D,
 )
-from rnapolis.util import handle_input_file
+from rnapolis.util import handle_input_file, pairwise_distances, torsion_angles, plannar_angles
 
 C1P_MAX_DISTANCE = 10.0
 
+LABELS = {
+    "1" : 1,
+    "2" : 2
+}
+
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO").upper())
 
+def residue_to_representation(residue_i: Residue3D, residue_j: Residue3D) -> list:
 
-# TODO: implement this function
+    distances = pairwise_distances(residue_i, residue_j)
+    plannars = plannar_angles(residue_i, residue_j)
+    torsions = plannar_angles(residue_i, residue_j)
+
+    return [*distances, *plannars, *torsions]
+
+
+# TODO: implement this function 
 def is_base_pair(residue_i: Residue3D, residue_j: Residue3D) -> bool:
-    return False
+    # sprawdzenie 3 nierówności 
+    # 
+    data = residue_to_representation(residue_i, residue_j)
+
+    model = XGBClassifier()
+    prediction = model.predict(data)
+    
+    return prediction
 
 
 # TODO: implement this function
 def classify_lw(residue_i: Residue3D, residue_j: Residue3D) -> Optional[LeontisWesthof]:
-    return None
+
+    data = residue_to_representation(residue_i, residue_j)
+
+    model = XGBClassifier()
+    prediction = model.predict(data)
+    return prediction
 
 
 # TODO: implement this function
 def classify_saenger(residue_i: Residue3D, residue_j: Residue3D) -> Optional[Saenger]:
-    return None
+    data = residue_to_representation(residue_i, residue_j)
+
+    model = XGBClassifier()
+    prediction = model.predict(data)
+    return prediction
 
 
 # TODO: implement this function
 def is_stacking(residue_i: Residue3D, residue_j: Residue3D) -> bool:
-    return False
+    data = residue_to_representation(residue_i, residue_j)
+
+    model = XGBClassifier()
+    prediction = model.predict(data)
+
+    return prediction
 
 
 def find_candidates(

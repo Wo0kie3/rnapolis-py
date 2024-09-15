@@ -6,7 +6,7 @@ import os
 import itertools
 import numpy as np
 from pandas import DataFrame
-from xgboost import XGBClassifier
+import xgboost as xgb
 from typing import List, Optional, Tuple
 import orjson
 from scipy.spatial import KDTree
@@ -30,171 +30,62 @@ from rnapolis.tertiary import (
 )
 from rnapolis.util import handle_input_file
 
-C1P_MAX_DISTANCE = 10.0
-
-LABELS = {
-    "1": 1,
-    "2": 2
-}
 
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO").upper())
 
-
-def _planar_angle(p1, p2, p3):
-    b1 = p2 - p1
-    b2 = p2 - p3
-
-    angle = np.arccos(
-        np.dot(b1, b2) / (np.linalg.norm(b1) * np.linalg.norm(b2)))
-    return np.degrees(angle)
-
-
-def _torsion_angle(p1, p2, p3, p4):
-    b1 = p2 - p1
-    b2 = p3 - p2
-    b3 = p4 - p3
-
-    n1 = np.cross(b1, b2)
-    n2 = np.cross(b2, b3)
-
-    torsion = np.arctan2(
-        np.dot(np.cross(n1, n2), b2 * np.linalg.norm(b2)), np.dot(n1, n2)
-    )
-    return np.degrees(torsion)
-
-
-def pairwise_distances(df: DataFrame, num_bins: int = 50) -> list:
-    coords = df[['x', 'y', 'z']].values
-    distances = np.sqrt(
-        np.sum((coords[:, np.newaxis, :] - coords[np.newaxis, :, :]) ** 2, axis=-1))
-    upper_triangle_indices = np.triu_indices_from(distances, k=1)
-    flattened_distances = distances[upper_triangle_indices]
-    histogram, bin_edges = np.histogram(
-        flattened_distances, bins=num_bins, density=True)
-    normalized_histogram = histogram / np.sum(histogram)
-    return normalized_histogram, bin_edges
-
-
-def plannar_angles(vector1: list, vector2: list, num_bins: int) -> list:
-
-    pairs_from_vector1 = list(itertools.combinations(vector1, 2))
-    pairs_from_vector2 = list(itertools.combinations(vector2, 2))
-
-    # Generate triplets where two elements are from vector1 and one from vector2
-    triplets_1 = []
-    for single_element in vector2:
-        for pair in pairs_from_vector1:
-            triplets_1.append((*pair, single_element))
-
-    # Generate triplets where two elements are from vector2 and one from vector1
-    triplets_2 = []
-    for single_element in vector1:
-        for pair in pairs_from_vector2:
-            triplets_2.append((*pair, single_element))
-
-    # Combine all triplets
-    all_triplets = triplets_1 + triplets_2
-
-    angles = []
-
-    all_triplets = np.array(all_triplets)
-
-    angles = [_planar_angle(trip[0], trip[1], trip[2])
-              for trip in all_triplets]
-
-    histogram, _ = np.histogram(angles, bins=num_bins, density=True)
-    normalized_histogram = histogram / np.sum(histogram)
-    return normalized_histogram
-
-
-def torsion_angles(vector_i: list, pos_i: int, vector_j: list, pos_j: int, num_bins: int) -> list:
-
-    pairs_from_vector1 = [(vector_i[pos_i], atom)
-                          for atom in vector_i if list(atom) != list(vector_i[pos_i])]
-
-    pairs_from_vector2 = [(vector_j[pos_j], atom)
-                          for atom in vector_j if list(atom) != list(vector_j[pos_j])]
-
-    combinations_of_pairs = []
-    for pair1 in pairs_from_vector1:
-        for pair2 in pairs_from_vector2:
-            combinations_of_pairs.append(pair1 + pair2)
-
-    combinations_of_pairs = np.array(combinations_of_pairs)
-
-    # Print the combinations of pairs
-    angles = [_torsion_angle(quad[0], quad[1], quad[2], quad[3])
-              for quad in combinations_of_pairs]
-
-    histogram, bin_edges = np.histogram(angles, bins=num_bins, density=True)
-    normalized_histogram = histogram / np.sum(histogram)
-    return normalized_histogram, bin_edges
-
-
-def is_correct_according_to_rnaview(residue: Residue3D):
-
-    n1 = residue.find_atom('N1').coordinates
-    c2 = residue.find_atom('C2').coordinates
-    c6 = residue.find_atom('C6').coordinates
-
-    d1 = np.linalg.norm(c2 - c6)
-    d2 = np.linalg.norm(n1 - c6)
-    d3 = np.linalg.norm(n1 - c2)
-
-    return (d1 <= 3.0 and
-            d2 <= 2.0 and
-            d3 <= 2.0)
-
-
-def residue_to_representation(residue_i: Residue3D, residue_j: Residue3D) -> list:
-
-    atoms_i = [atom.coordinates for atom in residue_i.atoms]
-    pos_i = [atom.name for atom in residue_i.atoms].index("C1'")
-    atoms_j = [atom.coordinates for atom in residue_j.atoms]
-    pos_j = [atom.name for atom in residue_j.atoms].index("C1'")
-
-    distances = pairwise_distances(atoms_i, atoms_j)
-    plannars = plannar_angles(atoms_i, atoms_j)
-    torsions = plannar_angles(atoms_i, pos_i, atoms_j, pos_j)
-
-    return [*distances, *plannars, *torsions]
+def residue_to_representation(residue_i, residue_j):
+    pass
 
 
 def is_base_pair(residue_i: Residue3D, residue_j: Residue3D) -> bool:
-
-    if not is_correct_according_to_rnaview(residue_i) and not is_correct_according_to_rnaview(residue_j):
-        return False
-
     data = residue_to_representation(residue_i, residue_j)
 
     model = XGBClassifier()
-    prediction = model.predict(data)
+    model.load_model("./models/base_model.json")
+
+    try:
+        prediction = model.predict()
+    except:
+        raise()
 
     return prediction
 
+def is_canonical(residue_i: Residue3D, residue_j: Residue3D) -> bool:
+    data = residue_to_representation(residue_i, residue_j)
+
+    model = XGBClassifier()
+    model.load_model("./models/canonical_model.json")
+
+    try:
+        prediction = model.predict()
+    except:
+        raise()
+
+    return prediction
 
 def classify_lw(residue_i: Residue3D, residue_j: Residue3D) -> Optional[LeontisWesthof]:
-
     data = residue_to_representation(residue_i, residue_j)
 
     model = XGBClassifier()
-    prediction = model.predict(data)
+    model.load_model("./models/lw_model.json")
+
+    try:
+        prediction = model.predict()
+    except:
+        raise()
+
     return prediction
-
-
-def classify_saenger(residue_i: Residue3D, residue_j: Residue3D) -> Optional[Saenger]:
-    data = residue_to_representation(residue_i, residue_j)
-
-    model = XGBClassifier()
-    prediction = model.predict(data)
-    return prediction
-
 
 def is_stacking(residue_i: Residue3D, residue_j: Residue3D) -> bool:
     data = residue_to_representation(residue_i, residue_j)
 
     model = XGBClassifier()
-    prediction = model.predict(data)
+    model.load_model("./models/stacking_model.json")
+
+    try:
+        prediction = model.predict()
+    except:
+        raise()
 
     return prediction
 
